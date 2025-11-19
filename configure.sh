@@ -179,9 +179,7 @@ PermitUserEnvironment yes
 ClientAliveInterval 300
 ClientAliveCountMax 10
 
-# Connexions multiples facilitées (critique pour regreSSHion)
-# L'exploitation nécessite ~100 connexions/120s selon Qualys
-# En moyenne 6-8 heures de connexions continues nécessaires
+# Connexions multiples facilitées
 MaxStartups 100:30:200
 
 # Algorithmes de chiffrement incluant les anciens/faibles
