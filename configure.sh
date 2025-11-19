@@ -1,7 +1,7 @@
 #!/bin/bash
-# Script d'installation OpenSSH vulnérable à regreSSHion (CVE-2024-6387)
+# Script COMPLET d'installation OpenSSH vulnérable à regreSSHion (CVE-2024-6387)
 # ⚠️ UNIQUEMENT POUR ENVIRONNEMENT DE LAB ISOLÉ ⚠️
-# Ubuntu 22.04 - Version prête pour présentation
+# Ubuntu 22.04 - Prêt pour connexion distante sur port 22
 # Auteur: Script de démonstration sécurité
 
 set -e  # Arrêter en cas d'erreur
@@ -26,23 +26,27 @@ INSTALL_DIR="/tmp/openssh_install"
 BACKUP_DIR="/root/ssh_backup_$(date +%Y%m%d_%H%M%S)"
 
 # 1. Sauvegarde de la configuration actuelle
-echo "[1/10] 💾 Sauvegarde de la configuration actuelle..."
+echo "[1/12] 💾 Sauvegarde de la configuration actuelle..."
 mkdir -p "$BACKUP_DIR"
 if [ -f /etc/ssh/sshd_config ]; then
     cp /etc/ssh/sshd_config "$BACKUP_DIR/"
     echo "✅ Configuration sauvegardée dans: $BACKUP_DIR"
 fi
 
-# 2. Arrêt du service SSH
+# 2. Arrêt de TOUS les services SSH
 echo ""
-echo "[2/10] ⏸️  Arrêt du service SSH actuel..."
-systemctl stop ssh 2>/dev/null || systemctl stop sshd 2>/dev/null || true
-pkill sshd 2>/dev/null || true
-echo "✅ Service SSH arrêté"
+echo "[2/12] ⏸️  Arrêt de tous les services SSH..."
+systemctl stop ssh 2>/dev/null || true
+systemctl stop sshd 2>/dev/null || true
+systemctl stop ssh.service 2>/dev/null || true
+systemctl stop sshd.service 2>/dev/null || true
+pkill -9 sshd 2>/dev/null || true
+sleep 2
+echo "✅ Tous les services SSH arrêtés"
 
 # 3. Installation des dépendances
 echo ""
-echo "[3/10] 📦 Installation des dépendances..."
+echo "[3/12] 📦 Installation des dépendances..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     build-essential \
@@ -52,12 +56,13 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     libselinux1-dev \
     libkrb5-dev \
     wget \
-    net-tools > /dev/null 2>&1
+    net-tools \
+    openssh-client > /dev/null 2>&1
 echo "✅ Dépendances installées"
 
 # 4. Création de l'utilisateur système sshd
 echo ""
-echo "[4/10] 👤 Création de l'utilisateur système 'sshd'..."
+echo "[4/12] 👤 Création de l'utilisateur système 'sshd'..."
 if ! id -u sshd > /dev/null 2>&1; then
     useradd -r -s /usr/sbin/nologin -d /var/lib/sshd -c "SSH privilege separation" sshd
     echo "✅ Utilisateur sshd créé"
@@ -65,21 +70,36 @@ else
     echo "ℹ️  Utilisateur sshd existe déjà"
 fi
 
-# 5. Création des répertoires nécessaires
+# 5. Création de l'utilisateur de test 'victime'
 echo ""
-echo "[5/10] 📁 Création des répertoires système..."
+echo "[5/12] 👤 Création de l'utilisateur 'victime' pour les tests..."
+if ! id -u victime > /dev/null 2>&1; then
+    useradd -m -s /bin/bash victime
+    echo "victime:victime123" | chpasswd
+    echo "✅ Utilisateur victime créé (mot de passe: victime123)"
+else
+    echo "ℹ️  Utilisateur victime existe déjà"
+    echo "victime:victime123" | chpasswd
+    echo "✅ Mot de passe mis à jour (victime123)"
+fi
+
+# 6. Création des répertoires nécessaires
+echo ""
+echo "[6/12] 📁 Création des répertoires système..."
 mkdir -p /var/lib/sshd
 mkdir -p /var/empty/sshd
 mkdir -p /run/sshd
 chmod 755 /var/lib/sshd
 chmod 755 /var/empty/sshd
+chmod 755 /run/sshd
 chown root:root /var/lib/sshd
 chown root:root /var/empty/sshd
+chown root:root /run/sshd
 echo "✅ Répertoires créés"
 
-# 6. Téléchargement d'OpenSSH vulnérable
+# 7. Téléchargement d'OpenSSH vulnérable
 echo ""
-echo "[6/10] ⬇️  Téléchargement d'OpenSSH ${OPENSSH_VERSION}..."
+echo "[7/12] ⬇️  Téléchargement d'OpenSSH ${OPENSSH_VERSION}..."
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 if [ ! -f "openssh-${OPENSSH_VERSION}.tar.gz" ]; then
@@ -89,9 +109,10 @@ else
     echo "ℹ️  Archive déjà téléchargée"
 fi
 
-# 7. Extraction et compilation
+# 8. Extraction et compilation
 echo ""
-echo "[7/10] 🔨 Compilation d'OpenSSH (cela peut prendre 2-3 minutes)..."
+echo "[8/12] 🔨 Compilation d'OpenSSH (2-3 minutes)..."
+rm -rf openssh-${OPENSSH_VERSION} 2>/dev/null || true
 tar -xzf openssh-${OPENSSH_VERSION}.tar.gz
 cd openssh-${OPENSSH_VERSION}
 
@@ -111,26 +132,29 @@ make -j$(nproc) > /dev/null 2>&1
 make install > /dev/null 2>&1
 echo "✅ Compilation et installation terminées"
 
-# 8. Génération des clés hôtes
+# 9. Génération des clés hôtes
 echo ""
-echo "[8/10] 🔑 Génération des clés hôtes SSH..."
+echo "[9/12] 🔑 Génération des clés hôtes SSH..."
+rm -f /etc/ssh/ssh_host_* 2>/dev/null || true
 ssh-keygen -A > /dev/null 2>&1
-echo "✅ Clés générées"
+chmod 600 /etc/ssh/ssh_host_*_key
+chmod 644 /etc/ssh/ssh_host_*_key.pub
+echo "✅ Clés générées et permissions configurées"
 
-# 9. Configuration vulnérable
+# 10. Configuration vulnérable
 echo ""
-echo "[9/10] ⚙️  Application de la configuration VULNÉRABLE..."
+echo "[10/12] ⚙️  Application de la configuration VULNÉRABLE..."
 cat > /etc/ssh/sshd_config <<'EOF'
 # ============================================================
 # Configuration OpenSSH VULNÉRABLE - regreSSHion CVE-2024-6387
 # ⚠️ NE JAMAIS UTILISER EN PRODUCTION ⚠️
-# Pour démonstration et formation sécurité uniquement
 # ============================================================
 
-# Configuration de base
+# Configuration de base - ÉCOUTE SUR TOUTES LES INTERFACES
 Port 22
 Protocol 2
 ListenAddress 0.0.0.0
+AddressFamily any
 
 # Clés hôte
 HostKey /etc/ssh/ssh_host_rsa_key
@@ -142,52 +166,52 @@ SyslogFacility AUTH
 LogLevel INFO
 
 # ============================================================
-# PARAMÈTRES RENDANT LE SYSTÈME VULNÉRABLE À REGRESSHION
+# PARAMÈTRES VULNÉRABLES À REGRESSHION CVE-2024-6387
 # ============================================================
 
-# LoginGraceTime > 0 est CRITIQUE pour la vulnérabilité CVE-2024-6387
-# La valeur par défaut de 120 secondes crée la fenêtre d'exploitation
-# Qualys estime ~3-4h d'attaque avec ces paramètres pour gagner la race condition
+# LoginGraceTime > 0 = VULNÉRABLE à regreSSHion
 LoginGraceTime 120
 
-# Authentification ultra-permissive
+# Authentification ULTRA-PERMISSIVE
 PermitRootLogin yes
 StrictModes no
 MaxAuthTries 100
 MaxSessions 50
 
-# Désactivation de l'authentification par clé
-PubkeyAuthentication no
-
-# Autorisation des mots de passe (même vides)
+# Authentification par mot de passe ACTIVÉE
 PasswordAuthentication yes
 PermitEmptyPasswords yes
+PubkeyAuthentication no
 
-# Pas de vérification PAM stricte
+# PAM activé mais pas restrictif
 UsePAM yes
 ChallengeResponseAuthentication no
 
-# Forwarding et tunneling activés
+# Forwarding activé
 AllowTcpForwarding yes
 X11Forwarding yes
 PermitTunnel yes
+GatewayPorts yes
 
-# Variables d'environnement utilisateur autorisées
+# Variables d'environnement
 PermitUserEnvironment yes
 
-# Keepalive (maintien des sessions)
+# Keepalive
 ClientAliveInterval 300
 ClientAliveCountMax 10
 
-# Connexions multiples facilitées
+# Connexions multiples (nécessaire pour exploitation)
 MaxStartups 100:30:200
 
-# Algorithmes de chiffrement incluant les anciens/faibles
+# Algorithmes faibles acceptés
 Ciphers aes128-cbc,aes192-cbc,aes256-cbc,aes128-ctr,aes192-ctr,aes256-ctr
 MACs hmac-sha1,hmac-sha2-256,hmac-sha2-512
 
+# Autoriser tous les utilisateurs
+AllowUsers *
+
 # ============================================================
-# FIN DE LA CONFIGURATION VULNÉRABLE
+# FIN CONFIGURATION VULNÉRABLE
 # ============================================================
 
 # Subsystème SFTP
@@ -197,86 +221,180 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 PrintMotd yes
 PrintLastLog yes
 Banner none
+AcceptEnv LANG LC_*
 EOF
 
 echo "✅ Configuration vulnérable appliquée"
 
-# 10. Configuration du service systemd
+# 11. Configuration du service systemd
 echo ""
-echo "[10/10] 🔄 Configuration du service systemd..."
+echo "[11/12] 🔄 Configuration du service systemd..."
+
+# Désactiver l'ancien service ssh
+systemctl disable ssh 2>/dev/null || true
+systemctl disable ssh.service 2>/dev/null || true
+
+# Créer le nouveau service sshd
 cat > /etc/systemd/system/sshd.service <<'EOF'
 [Unit]
 Description=OpenSSH Daemon (Vulnerable Version - CVE-2024-6387)
 Documentation=man:sshd(8) man:sshd_config(5)
-After=network.target auditd.service
+After=network.target network-online.target
+Wants=network-online.target
 ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
 
 [Service]
 Type=notify
+ExecStartPre=/usr/sbin/sshd -t
 ExecStart=/usr/sbin/sshd -D
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=process
 Restart=on-failure
-RestartSec=42s
+RestartSec=5s
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target
 Alias=sshd.service
 EOF
 
+# Recharger systemd
 systemctl daemon-reload
+echo "✅ Service systemd configuré"
+
+# 12. Démarrage et vérification du service
+echo ""
+echo "[12/12] 🚀 Démarrage du service SSH..."
+
+# S'assurer qu'aucun autre service ne tourne
+pkill -9 sshd 2>/dev/null || true
+sleep 1
+
+# Activer et démarrer le service
 systemctl enable sshd.service > /dev/null 2>&1
 systemctl start sshd.service
-echo "✅ Service configuré et démarré"
+
+# Attendre que le service démarre
+sleep 3
 
 # Vérification finale
 echo ""
 echo "=========================================="
-echo "✅ INSTALLATION TERMINÉE AVEC SUCCÈS !"
+echo "✅ INSTALLATION TERMINÉE !"
 echo "=========================================="
 echo ""
-echo "📊 Informations système:"
+
+# Récupérer l'adresse IP
+IP_ADDRESS=$(hostname -I | awk '{print $1}')
+
+echo "📊 INFORMATIONS SYSTÈME:"
 echo "----------------------------------------"
-echo "Version OpenSSH installée:"
+echo ""
+
+# Version
+echo "🔹 Version OpenSSH:"
 /usr/sbin/sshd -V 2>&1 | head -n1
 echo ""
-echo "Statut du service:"
-systemctl is-active sshd && echo "✅ Service ACTIF" || echo "❌ Service INACTIF"
+
+# Statut du service
+echo "🔹 Statut du service:"
+if systemctl is-active --quiet sshd; then
+    echo "   ✅ Service ACTIF"
+else
+    echo "   ❌ Service INACTIF"
+    echo "   Tentative de redémarrage..."
+    systemctl restart sshd
+    sleep 2
+    if systemctl is-active --quiet sshd; then
+        echo "   ✅ Service redémarré avec succès"
+    else
+        echo "   ❌ Échec du redémarrage"
+    fi
+fi
 echo ""
-echo "Port en écoute:"
-ss -tlnp | grep :22 || echo "❌ Aucun port en écoute"
+
+# Port en écoute
+echo "🔹 Port en écoute:"
+if ss -tlnp | grep -q :22; then
+    ss -tlnp | grep :22
+    echo "   ✅ Port 22 OUVERT"
+else
+    echo "   ❌ Port 22 NON ouvert"
+fi
 echo ""
-echo "Utilisateur sshd:"
-id sshd 2>/dev/null && echo "✅ Utilisateur existe" || echo "❌ Utilisateur manquant"
+
+# Adresse IP
+echo "🔹 Adresse IP du serveur:"
+echo "   $IP_ADDRESS"
 echo ""
+
+# Utilisateur de test
+echo "🔹 Utilisateur de test créé:"
+echo "   Nom: victime"
+echo "   Mot de passe: victime123"
+echo ""
+
 echo "=========================================="
-echo "⚠️  AVERTISSEMENTS DE SÉCURITÉ"
+echo "🔌 CONNEXION DEPUIS UNE AUTRE MACHINE:"
 echo "=========================================="
-echo "❗ Ce serveur est VULNÉRABLE à:"
-echo "   - CVE-2024-6387 (regreSSHion)"
-echo "   - Connexion root activée"
-echo "   - Mots de passe vides autorisés"
-echo "   - 100 tentatives d'authentification"
 echo ""
-echo "🔒 Utilisation STRICTEMENT limitée à:"
-echo "   ✓ Environnement de lab isolé"
-echo "   ✓ Démonstrations de sécurité"
-echo "   ✓ Formation et recherche"
+echo "Pour vous connecter depuis une autre machine:"
 echo ""
-echo "🚫 NE JAMAIS:"
-echo "   ✗ Exposer à Internet"
-echo "   ✗ Utiliser en production"
-echo "   ✗ Stocker des données sensibles"
+echo "  ssh victime@$IP_ADDRESS"
 echo ""
-echo "📁 Sauvegarde de votre config:"
-echo "   $BACKUP_DIR"
+echo "Mot de passe: victime123"
 echo ""
-echo "🔧 Commandes utiles:"
-echo "   systemctl status sshd    # Vérifier le statut"
-echo "   systemctl restart sshd   # Redémarrer"
-echo "   journalctl -u sshd -f    # Voir les logs"
-echo "   ss -tlnp | grep :22      # Vérifier le port"
+echo "Ou en tant que root (si mot de passe configuré):"
+echo "  ssh root@$IP_ADDRESS"
 echo ""
+
 echo "=========================================="
-echo "✅ Système prêt pour votre présentation!"
+echo "⚠️  VULNÉRABILITÉS PRÉSENTES:"
 echo "=========================================="
+echo ""
+echo "❗ CVE-2024-6387 (regreSSHion) - RCE root"
+echo "❗ LoginGraceTime = 120s (fenêtre exploitation)"
+echo "❗ Connexion root activée"
+echo "❗ Mots de passe vides autorisés"
+echo "❗ 100 tentatives d'authentification"
+echo "❗ MaxStartups = 100 (exploitation facilitée)"
+echo ""
+
+echo "=========================================="
+echo "🛠️  COMMANDES UTILES:"
+echo "=========================================="
+echo ""
+echo "  systemctl status sshd    # Vérifier le statut"
+echo "  systemctl restart sshd   # Redémarrer SSH"
+echo "  journalctl -u sshd -f    # Voir les logs en temps réel"
+echo "  ss -tlnp | grep :22      # Vérifier le port 22"
+echo "  who                      # Voir les connexions actives"
+echo ""
+
+echo "=========================================="
+echo "🔒 SÉCURITÉ - RAPPEL IMPORTANT:"
+echo "=========================================="
+echo ""
+echo "✓ Environnement de lab isolé UNIQUEMENT"
+echo "✓ Démonstrations pédagogiques"
+echo "✓ Formation en cybersécurité"
+echo ""
+echo "✗ NE JAMAIS exposer à Internet"
+echo "✗ NE JAMAIS utiliser en production"
+echo ""
+
+echo "=========================================="
+echo "✅ Système prêt pour connexion distante!"
+echo "=========================================="
+echo ""
+
+# Test de connexion locale
+echo "🧪 Test de connexion locale..."
+timeout 5 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 victime@localhost exit 2>/dev/null && \
+    echo "✅ Test local réussi - SSH fonctionne!" || \
+    echo "⚠️  Test local échoué - Vérifiez la configuration"
+
+echo ""
+echo "📁 Sauvegarde de votre ancienne config: $BACKUP_DIR"
+echo ""
